@@ -92,12 +92,14 @@ class ImagePreprocessor {
       final contextBounds = _squareCropAroundBounds(
         orientedSize,
         bounds,
-        paddingScale: 1.35,
+        paddingScale: 2.4,
+        minimumSideFraction: 1,
       );
       final tightBounds = _squareCropAroundBounds(
         orientedSize,
         bounds,
-        paddingScale: 1.08,
+        paddingScale: 1.6,
+        minimumSideFraction: 0.72,
       );
       return CameraFrameCrops(
         context: _sampleLuminanceCrop(
@@ -127,7 +129,12 @@ class ImagePreprocessor {
     }
     if (mirrorHorizontally) oriented = img.flipHorizontal(oriented);
     return CameraFrameCrops(
-      context: _cropAroundHand(oriented, bounds, paddingScale: 1.35),
+      context: _cropAroundHand(
+        oriented,
+        bounds,
+        paddingScale: 2.4,
+        minimumSideFraction: 1,
+      ),
       tight: _cropAroundLandmarks(oriented, landmarks),
       orientedLandmarks: landmarks,
     );
@@ -278,6 +285,7 @@ class ImagePreprocessor {
     Size imageSize,
     Rect normalizedBounds, {
     required double paddingScale,
+    double minimumSideFraction = 0,
   }) {
     final left = normalizedBounds.left.clamp(0.0, 1.0) * imageSize.width;
     final top = normalizedBounds.top.clamp(0.0, 1.0) * imageSize.height;
@@ -291,7 +299,11 @@ class ImagePreprocessor {
     final shortestSide = imageSize.width < imageSize.height
         ? imageSize.width
         : imageSize.height;
-    final side = requestedSide.clamp(1.0, shortestSide);
+    final minimumSide = (shortestSide * minimumSideFraction).clamp(
+      1.0,
+      shortestSide,
+    );
+    final side = requestedSide.clamp(minimumSide, shortestSide);
     final maxX = imageSize.width - side;
     final maxY = imageSize.height - side;
     final x = ((left + right - side) / 2).clamp(0.0, maxX);
@@ -368,6 +380,7 @@ class ImagePreprocessor {
     img.Image source,
     Rect normalizedCrop, {
     double paddingScale = 1.55,
+    double minimumSideFraction = 0,
   }) {
     final left = normalizedCrop.left.clamp(0.0, 1.0) * source.width;
     final top = normalizedCrop.top.clamp(0.0, 1.0) * source.height;
@@ -381,7 +394,11 @@ class ImagePreprocessor {
     final requestedSide =
         ((handWidth > handHeight ? handWidth : handHeight) * paddingScale)
             .round();
-    final side = requestedSide.clamp(1, shortestSide);
+    final minimumSide = (shortestSide * minimumSideFraction).round().clamp(
+      1,
+      shortestSide,
+    );
+    final side = requestedSide.clamp(minimumSide, shortestSide);
     final centerX = (left + right) / 2;
     final centerY = (top + bottom) / 2;
     final maxX = source.width - side;
@@ -399,7 +416,8 @@ class ImagePreprocessor {
     return _cropAroundHand(
       source,
       _boundsForPoints(normalizedLandmarks),
-      paddingScale: 1.08,
+      paddingScale: 1.6,
+      minimumSideFraction: 0.72,
     );
   }
 

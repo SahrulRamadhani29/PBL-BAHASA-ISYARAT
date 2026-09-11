@@ -300,8 +300,10 @@ void main() {
 
         expect(crops.context, hasModelDimensions);
         expect(crops.tight, hasModelDimensions);
-        expect(_averageBrightness(crops.context), greaterThan(70));
-        expect(_averageBrightness(crops.tight), greaterThan(110));
+        // Context intentionally keeps the full short side so framing remains
+        // close to training data; the hand is therefore less concentrated.
+        expect(_averageBrightness(crops.context), greaterThan(30));
+        expect(_averageBrightness(crops.tight), greaterThan(60));
       },
     );
   }

@@ -115,15 +115,20 @@ class SignClassifier {
     _lastContextPrediction = contextPrediction;
     _lastTightPrediction = null;
     _lastLandmarkPrediction = landmarkPrediction;
+    if (contextPrediction.confidence >= 0.80) return contextPrediction;
+
     final tightPrediction = await _classifyModelImage(
       _lastTightInput = ImagePreprocessor.toModelImage(crops.tight),
     );
     _lastTightPrediction = tightPrediction;
     // The landmark reference contains only one example per letter, so it is
     // useful for diagnostics but not reliable enough to overrule the CNN.
-    // Both image crops contain the complete hand; the closer crop resembles
-    // the tightly framed training images and therefore receives more weight.
-    return _blendImagePredictions(contextPrediction, tightPrediction);
+    // The full-width context crop is the canonical input. A tighter crop may
+    // reinforce an uncertain result, but must not replace it with an
+    // overconfident prediction based on a partial hand.
+    return tightPrediction.label == contextPrediction.label
+        ? _blendImagePredictions(contextPrediction, tightPrediction)
+        : contextPrediction;
   }
 
   Future<SignPrediction> classifyImage(
@@ -233,8 +238,8 @@ class SignClassifier {
       List<double>.generate(
         _labels.length,
         (index) =>
-            contextPrediction.scores[index] * 0.35 +
-            tightPrediction.scores[index] * 0.65,
+            contextPrediction.scores[index] * 0.65 +
+            tightPrediction.scores[index] * 0.35,
         growable: false,
       ),
     );

@@ -383,12 +383,15 @@ class _CameraScreenState extends State<CameraScreen>
     _isProcessingFrame = true;
     final analysisGeneration = _analysisGeneration;
 
-    final mirror =
-        controller.description.lensDirection == CameraLensDirection.front;
+    // CameraPreview mirrors the front camera for the user, but the raw image
+    // stream and MediaPipe landmarks are not mirrored. The ASL model was also
+    // trained in that canonical orientation: mirroring a clear C makes it
+    // predict P. Keep the model input unmirrored for both camera lenses.
+    const mirrorForModel = false;
     _lastFrameWidth = cameraImage.width;
     _lastFrameHeight = cameraImage.height;
     _lastFrameRotation = rotation;
-    _lastFrameMirrored = mirror;
+    _lastFrameMirrored = mirrorForModel;
     final landmarks = _latestHandLandmarks;
     if (landmarks == null || landmarks.length != 21) {
       _isProcessingFrame = false;
@@ -398,7 +401,7 @@ class _CameraScreenState extends State<CameraScreen>
         .classifyCameraFrame(
           cameraImage,
           rotationDegrees: rotation,
-          mirrorHorizontally: mirror,
+          mirrorHorizontally: mirrorForModel,
           normalizedLandmarks: landmarks,
         )
         .then((prediction) => _acceptPrediction(prediction, analysisGeneration))
