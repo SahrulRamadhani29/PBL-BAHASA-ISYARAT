@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "experimental": true,
+  "model_name": "LatihIsyarat PBL - Three-Seed Ensemble",
+  "model_version": "wide_3seed_full_data_refit_v1",
+  "selected_stage": "after_full_data_fine_tune",
+  "member_seeds": [
+    42,
+    123,
+    2026
+  ],
+  "target_test_accuracy": 0.995,
+  "target_achieved": false,
+  "selection_warning": "The three experimental stages were compared on the official test set. This is an exploratory result, not an untouched final benchmark.",
+  "input_contract": {
+    "shape": [
+      1,
+      28,
+      28,
+      1
+    ],
+    "dtype": "float32",
+    "value_range_before_model": [
+      0.0,
+      255.0
+    ],
+    "color_space": "grayscale",
+    "normalization": "Rescaling(1/255) inside every ensemble member",
+    "mobile_must_divide_by_255": false
+  },
+  "output_contract": {
+    "shape": [
+      1,
+      24
+    ],
+    "dtype": "float32",
+    "labels": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H",
+      "I",
+      "K",
+      "L",
+      "M",
+      "N",
+      "O",
+      "P",
+      "Q",
+      "R",
+      "S",
+      "T",
+      "U",
+      "V",
+      "W",
+      "X",
+      "Y"
+    ]
+  },
+  "tflite": {
+    "path": "model_float16.tflite",
+    "quantization": "float16_weights",
+    "size_bytes": 5523980,
+    "size_mib": 5.268077850341797,
+    "sha256": "80127bd9f692750047447500578bc8ecc3cdca466eee14037a55d53dc7ea79a9"
+  },
+  "test_metrics": {
+    "accuracy": 0.9930284439486894,
+    "macro_precision": 0.9934157867760499,
+    "macro_recall": 0.9935455660556523,
+    "macro_f1": 0.993325220663429
+  },
+  "stage_comparison": [
+    {
+      "stage": "existing_two_seed_winner",
+      "accuracy_pct": 98.9542665923034,
+      "macro_f1_pct": 98.97781523033582,
+      "errors": 75,
+      "tflite_float16_mib": 3.512592315673828,
+      "tflite_label_agreement_pct": 100.0,
+      "target_99_5": false
+    },
+    {
+      "stage": "before_full_data_fine_tune",
+      "accuracy_pct": 98.73117679866145,
+      "macro_f1_pct": 98.81296384514539,
+      "errors": 91,
+      "tflite_float16_mib": 5.268077850341797,
+      "tflite_label_agreement_pct": 100.0,
+      "target_99_5": false
+    },
+    {
+      "stage": "after_full_data_fine_tune",
+      "accuracy_pct": 99.30284439486894,
+      "macro_f1_pct": 99.3325220663429,
+      "errors": 50,
+      "tflite_float16_mib": 5.268077850341797,
+      "tflite_label_agreement_pct": 100.0,
+      "target_99_5": false
+    }
+  ],
+  "camera_warning": "Dataset accuracy is not camera accuracy."
+}
