@@ -72,27 +72,60 @@ class ImagePreprocessor {
     required bool mirrorHorizontally,
     required List<Offset> normalizedLandmarks,
   }) {
-    final sensorGray = switch (cameraImage.format.group) {
-      ImageFormatGroup.yuv420 ||
-      ImageFormatGroup.nv21 => _luminancePlaneToImage(cameraImage),
-      ImageFormatGroup.bgra8888 => _bgraToGray(cameraImage),
-      _ => throw UnsupportedError(
-        'Format kamera ${cameraImage.format.group.name} belum didukung.',
-      ),
-    };
-    var oriented = rotationDegrees == 0
-        ? sensorGray
-        : img.copyRotate(sensorGray, angle: rotationDegrees.toDouble());
-    if (mirrorHorizontally) {
-      oriented = img.flipHorizontal(oriented);
-    }
-
+    // MediaPipe applies ImageProcessingOptions.rotationDegrees before it
+    // returns normalized landmarks. Rotating these points again moves the crop
+    // away from the hand. The front-camera mirror is the only remaining
+    // transform needed to align landmarks with the model image below.
     final landmarks = orientNormalizedPoints(
       normalizedLandmarks,
-      rotationDegrees: rotationDegrees,
+      rotationDegrees: 0,
       mirrorHorizontally: mirrorHorizontally,
     );
     final bounds = _boundsForPoints(landmarks);
+    if (cameraImage.format.group == ImageFormatGroup.yuv420 ||
+        cameraImage.format.group == ImageFormatGroup.nv21) {
+      final orientedSize = _orientedSize(
+        cameraImage.width,
+        cameraImage.height,
+        rotationDegrees,
+      );
+      final contextBounds = _squareCropAroundBounds(
+        orientedSize,
+        bounds,
+        paddingScale: 1.35,
+      );
+      final tightBounds = _squareCropAroundBounds(
+        orientedSize,
+        bounds,
+        paddingScale: 1.08,
+      );
+      return CameraFrameCrops(
+        context: _sampleLuminanceCrop(
+          cameraImage,
+          contextBounds,
+          rotationDegrees: rotationDegrees,
+          mirrorHorizontally: mirrorHorizontally,
+        ),
+        tight: _sampleLuminanceCrop(
+          cameraImage,
+          tightBounds,
+          rotationDegrees: rotationDegrees,
+          mirrorHorizontally: mirrorHorizontally,
+        ),
+        orientedLandmarks: landmarks,
+      );
+    }
+
+    if (cameraImage.format.group != ImageFormatGroup.bgra8888) {
+      throw UnsupportedError(
+        'Format kamera ${cameraImage.format.group.name} belum didukung.',
+      );
+    }
+    var oriented = _bgraToGray(cameraImage);
+    if (rotationDegrees != 0) {
+      oriented = img.copyRotate(oriented, angle: rotationDegrees.toDouble());
+    }
+    if (mirrorHorizontally) oriented = img.flipHorizontal(oriented);
     return CameraFrameCrops(
       context: _cropAroundHand(oriented, bounds, paddingScale: 1.35),
       tight: _cropAroundLandmarks(oriented, landmarks),
@@ -234,6 +267,103 @@ class ImagePreprocessor {
     );
   }
 
+  static Size _orientedSize(int width, int height, int rotationDegrees) {
+    final rotation = ((rotationDegrees % 360) + 360) % 360;
+    return rotation == 90 || rotation == 270
+        ? Size(height.toDouble(), width.toDouble())
+        : Size(width.toDouble(), height.toDouble());
+  }
+
+  static Rect _squareCropAroundBounds(
+    Size imageSize,
+    Rect normalizedBounds, {
+    required double paddingScale,
+  }) {
+    final left = normalizedBounds.left.clamp(0.0, 1.0) * imageSize.width;
+    final top = normalizedBounds.top.clamp(0.0, 1.0) * imageSize.height;
+    final right = normalizedBounds.right.clamp(0.0, 1.0) * imageSize.width;
+    final bottom = normalizedBounds.bottom.clamp(0.0, 1.0) * imageSize.height;
+    final requestedSide =
+        ((right - left).abs() > (bottom - top).abs()
+            ? (right - left).abs()
+            : (bottom - top).abs()) *
+        paddingScale;
+    final shortestSide = imageSize.width < imageSize.height
+        ? imageSize.width
+        : imageSize.height;
+    final side = requestedSide.clamp(1.0, shortestSide);
+    final maxX = imageSize.width - side;
+    final maxY = imageSize.height - side;
+    final x = ((left + right - side) / 2).clamp(0.0, maxX);
+    final y = ((top + bottom - side) / 2).clamp(0.0, maxY);
+    return Rect.fromLTWH(x, y, side, side);
+  }
+
+  static img.Image _sampleLuminanceCrop(
+    CameraImage cameraImage,
+    Rect crop, {
+    required int rotationDegrees,
+    required bool mirrorHorizontally,
+  }) {
+    final plane = cameraImage.planes.first;
+    final pixelStride = plane.bytesPerPixel ?? 1;
+    final orientedSize = _orientedSize(
+      cameraImage.width,
+      cameraImage.height,
+      rotationDegrees,
+    );
+    final output = img.Image(width: 28, height: 28, numChannels: 1);
+    for (var outputY = 0; outputY < 28; outputY++) {
+      for (var outputX = 0; outputX < 28; outputX++) {
+        var sum = 0;
+        for (final sampleY in const <double>[0.25, 0.75]) {
+          for (final sampleX in const <double>[0.25, 0.75]) {
+            final orientedX =
+                (crop.left + (outputX + sampleX) * crop.width / 28) /
+                orientedSize.width;
+            final orientedY =
+                (crop.top + (outputY + sampleY) * crop.height / 28) /
+                orientedSize.height;
+            final sensorPoint = _orientedToSensorPoint(
+              Offset(orientedX, orientedY),
+              rotationDegrees: rotationDegrees,
+              mirroredHorizontally: mirrorHorizontally,
+            );
+            final sensorX = (sensorPoint.dx * cameraImage.width).floor().clamp(
+              0,
+              cameraImage.width - 1,
+            );
+            final sensorY = (sensorPoint.dy * cameraImage.height).floor().clamp(
+              0,
+              cameraImage.height - 1,
+            );
+            sum += plane
+                .bytes[sensorY * plane.bytesPerRow + sensorX * pixelStride];
+          }
+        }
+        output.setPixelR(outputX, outputY, sum ~/ 4);
+      }
+    }
+    return output;
+  }
+
+  static Offset _orientedToSensorPoint(
+    Offset point, {
+    required int rotationDegrees,
+    required bool mirroredHorizontally,
+  }) {
+    final rotated = mirroredHorizontally
+        ? Offset(1 - point.dx, point.dy)
+        : point;
+    final rotation = ((rotationDegrees % 360) + 360) % 360;
+    return switch (rotation) {
+      90 => Offset(rotated.dy, 1 - rotated.dx),
+      180 => Offset(1 - rotated.dx, 1 - rotated.dy),
+      270 => Offset(1 - rotated.dy, rotated.dx),
+      _ => rotated,
+    };
+  }
+
   static img.Image _cropAroundHand(
     img.Image source,
     Rect normalizedCrop, {
@@ -266,48 +396,11 @@ class ImagePreprocessor {
     img.Image source,
     List<Offset> normalizedLandmarks,
   ) {
-    if (normalizedLandmarks.length < 18) {
-      return _cropAroundHand(
-        source,
-        _boundsForPoints(normalizedLandmarks),
-        paddingScale: 1.1,
-      );
-    }
-
-    final points = normalizedLandmarks
-        .map(
-          (point) => Offset(
-            point.dx.clamp(0.0, 1.0) * source.width,
-            point.dy.clamp(0.0, 1.0) * source.height,
-          ),
-        )
-        .toList(growable: false);
-    final bounds = _boundsForPoints(normalizedLandmarks);
-    final handWidth = bounds.width * source.width;
-    final handHeight = bounds.height * source.height;
-    final shortestSide = source.width < source.height
-        ? source.width
-        : source.height;
-    final minimumSide = (shortestSide * 0.18).round();
-    final requestedSide =
-        ((handWidth > handHeight ? handWidth : handHeight) * 0.82).round();
-    final side = requestedSide.clamp(minimumSide, shortestSide);
-
-    const palmIndices = <int>[0, 5, 9, 13, 17];
-    final palmCenter =
-        palmIndices.map((index) => points[index]).reduce((a, b) => a + b) /
-        palmIndices.length.toDouble();
-    final fingerAxis = points[9] - points[0];
-    final axisLength = fingerAxis.distance;
-    final center = axisLength == 0
-        ? palmCenter
-        : palmCenter + (fingerAxis / axisLength) * side.toDouble() * 0.08;
-    final maxX = source.width - side;
-    final maxY = source.height - side;
-    final x = (center.dx - side / 2).round().clamp(0, maxX);
-    final y = (center.dy - side / 2).round().clamp(0, maxY);
-
-    return img.copyCrop(source, x: x, y: y, width: side, height: side);
+    return _cropAroundHand(
+      source,
+      _boundsForPoints(normalizedLandmarks),
+      paddingScale: 1.08,
+    );
   }
 
   static img.Image _luminancePlaneToImage(CameraImage cameraImage) {

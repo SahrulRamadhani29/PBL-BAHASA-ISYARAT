@@ -24,11 +24,12 @@ class CameraScreen extends StatefulWidget {
 
 class _CameraScreenState extends State<CameraScreen>
     with WidgetsBindingObserver {
-  static const _handDetectionInterval = Duration(milliseconds: 160);
-  static const _analysisInterval = Duration(milliseconds: 180);
+  static const _handDetectionInterval = Duration(milliseconds: 320);
+  static const _analysisInterval = Duration(milliseconds: 260);
   static const _minimumConfidence = 0.60;
   static const _stableFramesRequired = 2;
-  static const _handPresenceWindow = Duration(milliseconds: 1500);
+  static const _handPresenceWindow = Duration(milliseconds: 800);
+  static const _handDetectionTimeout = Duration(seconds: 2);
   static final _supportedLabels = 'ABCDEFGHIKLMNOPQRSTUVWXY'.split('');
 
   CameraController? _controller;
@@ -41,6 +42,7 @@ class _CameraScreenState extends State<CameraScreen>
   bool _isTargetAnalysisActive = false;
   bool _isTargetAnalysisStarting = false;
   bool _isProcessingFrame = false;
+  bool _isHandDetectionPending = false;
   bool _handDetected = false;
   String? _cameraError;
   DateTime? _lastHandDetectionAt;
@@ -122,15 +124,11 @@ class _CameraScreenState extends State<CameraScreen>
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.yuv420,
     );
-    await Future.wait([
-      controller.initialize(),
-      SignClassifier.instance.initialize(),
-    ]);
+    await controller.initialize();
     if (!mounted) {
       await controller.dispose();
       return;
     }
-    _initializeHandLandmarker();
     setState(() => _controller = controller);
     if (_selectedTarget.isNotEmpty) {
       await _startTargetAnalysis(resetResults: false);
@@ -138,32 +136,26 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _initializeHandLandmarker() {
+    if (_handLandmarker != null) return;
     _handSubscription?.cancel();
     _handLandmarker?.dispose();
-    late final HandLandmarkerPlugin landmarker;
-    try {
-      landmarker = HandLandmarkerPlugin.create(
-        numHands: 1,
-        minHandDetectionConfidence: 0.30,
-        delegate: HandLandmarkerDelegate.gpu,
-      );
-    } catch (_) {
-      landmarker = HandLandmarkerPlugin.create(
-        numHands: 1,
-        minHandDetectionConfidence: 0.30,
-        delegate: HandLandmarkerDelegate.cpu,
-      );
-    }
+    final landmarker = HandLandmarkerPlugin.create(
+      numHands: 1,
+      minHandDetectionConfidence: 0.35,
+      delegate: HandLandmarkerDelegate.cpu,
+    );
     _handLandmarker = landmarker;
     _handSubscription = landmarker.landmarkStream.listen(
       _acceptHandLandmarks,
       onError: (Object error) {
+        _isHandDetectionPending = false;
         if (mounted) _showMessage('Hand detector gagal: $error');
       },
     );
   }
 
   void _acceptHandLandmarks(List<Hand> hands) {
+    _isHandDetectionPending = false;
     if (!mounted || !_isAnalysisActive) return;
     final now = DateTime.now();
     final detectedHands = hands.where((hand) => hand.landmarks.isNotEmpty);
@@ -216,6 +208,7 @@ class _CameraScreenState extends State<CameraScreen>
     }
     try {
       await SignClassifier.instance.initialize();
+      _initializeHandLandmarker();
       setState(() {
         _resetRecognitionState(clearFreeResults: true);
         _savedVideoPath = null;
@@ -283,6 +276,7 @@ class _CameraScreenState extends State<CameraScreen>
     }
     try {
       await SignClassifier.instance.initialize();
+      _initializeHandLandmarker();
       if (resetResults && mounted) {
         setState(() => _resetRecognitionState(clearTargetResults: true));
       }
@@ -337,6 +331,7 @@ class _CameraScreenState extends State<CameraScreen>
     _lastAnalysisAt = null;
     _lastHandSeenAt = null;
     _latestHandLandmarks = null;
+    _isHandDetectionPending = false;
     _latestTargetPrediction = null;
     _latestTargetConfidence = null;
     _analysisGeneration++;
@@ -352,12 +347,20 @@ class _CameraScreenState extends State<CameraScreen>
       requestedRotationDegrees: _imageRotation(controller),
     );
     final now = DateTime.now();
-    if (_lastHandDetectionAt == null ||
-        now.difference(_lastHandDetectionAt!) >= _handDetectionInterval) {
+    if (_isHandDetectionPending &&
+        _lastHandDetectionAt != null &&
+        now.difference(_lastHandDetectionAt!) >= _handDetectionTimeout) {
+      _isHandDetectionPending = false;
+    }
+    if (!_isHandDetectionPending &&
+        (_lastHandDetectionAt == null ||
+            now.difference(_lastHandDetectionAt!) >= _handDetectionInterval)) {
       _lastHandDetectionAt = now;
+      _isHandDetectionPending = true;
       try {
         _handLandmarker?.processFrame(cameraImage, rotation);
       } catch (error) {
+        _isHandDetectionPending = false;
         if (mounted) {
           _showMessage('Hand detector gagal memproses frame: $error');
         }
@@ -472,6 +475,25 @@ class _CameraScreenState extends State<CameraScreen>
       final classifier = SignClassifier.instance;
       final contextPng = classifier.lastContextInputPng;
       if (contextPng == null) return;
+      final tightPng = classifier.lastTightInputPng;
+      final metadata = <String, Object?>{
+        'final_prediction': _predictionJson(finalPrediction),
+        'context_prediction': _predictionJson(classifier.lastContextPrediction),
+        'tight_prediction': _predictionJson(classifier.lastTightPrediction),
+        'landmark_prediction': _predictionJson(
+          classifier.lastLandmarkPrediction,
+        ),
+        'sensor_orientation': _controller?.description.sensorOrientation,
+        'device_orientation': _controller?.value.deviceOrientation.name,
+        'lens_direction': _controller?.description.lensDirection.name,
+        'frame_width': _lastFrameWidth,
+        'frame_height': _lastFrameHeight,
+        'rotation_degrees': _lastFrameRotation,
+        'mirrored': _lastFrameMirrored,
+        'mediapipe_landmarks': _latestHandLandmarks
+            ?.map((point) => <double>[point.dx, point.dy])
+            .toList(growable: false),
+      };
       final documents = await getApplicationDocumentsDirectory();
       final directory = Directory(
         '${documents.path}${Platform.pathSeparator}camera_diagnostic',
@@ -480,28 +502,14 @@ class _CameraScreenState extends State<CameraScreen>
       await File(
         '${directory.path}${Platform.pathSeparator}model_input_context.png',
       ).writeAsBytes(contextPng, flush: true);
-      final tightPng = classifier.lastTightInputPng;
+      final tightPath =
+          '${directory.path}${Platform.pathSeparator}model_input_tight.png';
       if (tightPng != null) {
-        await File(
-          '${directory.path}${Platform.pathSeparator}model_input_tight.png',
-        ).writeAsBytes(tightPng, flush: true);
+        await File(tightPath).writeAsBytes(tightPng, flush: true);
+      } else {
+        final staleTightFile = File(tightPath);
+        if (await staleTightFile.exists()) await staleTightFile.delete();
       }
-      final controller = _controller;
-      final metadata = <String, Object?>{
-        'final_prediction': _predictionJson(finalPrediction),
-        'context_prediction': _predictionJson(classifier.lastContextPrediction),
-        'tight_prediction': _predictionJson(classifier.lastTightPrediction),
-        'landmark_prediction': _predictionJson(
-          classifier.lastLandmarkPrediction,
-        ),
-        'sensor_orientation': controller?.description.sensorOrientation,
-        'device_orientation': controller?.value.deviceOrientation.name,
-        'lens_direction': controller?.description.lensDirection.name,
-        'frame_width': _lastFrameWidth,
-        'frame_height': _lastFrameHeight,
-        'rotation_degrees': _lastFrameRotation,
-        'mirrored': _lastFrameMirrored,
-      };
       await File('${directory.path}${Platform.pathSeparator}metadata.json')
           .writeAsString(
             const JsonEncoder.withIndent('  ').convert(metadata),
@@ -676,6 +684,7 @@ class _CameraScreenState extends State<CameraScreen>
     _isSessionActive = false;
     _isTargetAnalysisActive = false;
     _isTargetAnalysisStarting = false;
+    _isHandDetectionPending = false;
     _analysisGeneration++;
     await _handSubscription?.cancel();
     _handSubscription = null;

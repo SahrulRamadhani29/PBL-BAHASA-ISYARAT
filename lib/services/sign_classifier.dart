@@ -21,6 +21,7 @@ class SignClassifier {
       'assets/models/landmark_references.json';
 
   Interpreter? _interpreter;
+  IsolateInterpreter? _isolateInterpreter;
   List<String> _labels = const [];
   Map<String, List<Offset>> _landmarkReferences = const {};
   Future<void>? _initialization;
@@ -30,7 +31,8 @@ class SignClassifier {
   SignPrediction? _lastTightPrediction;
   SignPrediction? _lastLandmarkPrediction;
 
-  bool get isReady => _interpreter != null && _labels.isNotEmpty;
+  bool get isReady =>
+      _interpreter != null && _isolateInterpreter != null && _labels.isNotEmpty;
   List<String> get labels => List.unmodifiable(_labels);
   List<int>? get lastContextInputPng =>
       _lastContextInput == null ? null : img.encodePng(_lastContextInput!);
@@ -79,6 +81,10 @@ class SignClassifier {
         'Kontrak model tidak sesuai: input $inputShape, output $outputShape.',
       );
     }
+    _isolateInterpreter = await IsolateInterpreter.create(
+      address: _interpreter!.address,
+      debugName: 'LatihIsyaratClassifier',
+    );
   }
 
   Future<SignPrediction> classifyFile(String path) async {
@@ -94,7 +100,7 @@ class SignClassifier {
     required bool mirrorHorizontally,
     required List<Offset> normalizedLandmarks,
   }) async {
-    await initialize();
+    if (!isReady) await initialize();
     final crops = ImagePreprocessor.cameraImageToGrayCrops(
       cameraImage,
       rotationDegrees: rotationDegrees,
@@ -102,38 +108,25 @@ class SignClassifier {
       normalizedLandmarks: normalizedLandmarks,
     );
     final contextInput = ImagePreprocessor.toModelImage(crops.context);
-    final contextPrediction = _classifyModelImage(contextInput);
+    final contextPrediction = await _classifyModelImage(contextInput);
     final landmarkPrediction = _classifyLandmarks(crops.orientedLandmarks);
     _lastContextInput = contextInput;
     _lastTightInput = null;
     _lastContextPrediction = contextPrediction;
     _lastTightPrediction = null;
     _lastLandmarkPrediction = landmarkPrediction;
-    final landmarksDisagreeStrongly =
-        landmarkPrediction != null &&
-        landmarkPrediction.confidence >= 0.55 &&
-        landmarkPrediction.label != contextPrediction.label;
-    if (!landmarksDisagreeStrongly && contextPrediction.confidence >= 0.80) {
-      return contextPrediction;
-    }
-
-    final tightPrediction = _classifyModelImage(
+    final tightPrediction = await _classifyModelImage(
       _lastTightInput = ImagePreprocessor.toModelImage(crops.tight),
     );
     _lastTightPrediction = tightPrediction;
-    if (landmarkPrediction != null &&
-        landmarkPrediction.confidence >= 0.55 &&
-        tightPrediction.label == landmarkPrediction.label) {
-      return _blendPredictions(tightPrediction, landmarkPrediction);
-    }
-    if (contextPrediction.confidence < 0.80 &&
-        tightPrediction.confidence > contextPrediction.confidence) {
-      return tightPrediction;
-    }
-    return contextPrediction;
+    // The landmark reference contains only one example per letter, so it is
+    // useful for diagnostics but not reliable enough to overrule the CNN.
+    // Both image crops contain the complete hand; the closer crop resembles
+    // the tightly framed training images and therefore receives more weight.
+    return _blendImagePredictions(contextPrediction, tightPrediction);
   }
 
-  SignPrediction classifyImage(
+  Future<SignPrediction> classifyImage(
     img.Image image, {
     double cropFraction = 1,
     Rect? normalizedCrop,
@@ -151,15 +144,15 @@ class SignClassifier {
     return _classifyModelImage(modelImage);
   }
 
-  SignPrediction _classifyModelImage(img.Image modelImage) {
-    final interpreter = _interpreter;
-    if (interpreter == null) {
+  Future<SignPrediction> _classifyModelImage(img.Image modelImage) async {
+    final isolateInterpreter = _isolateInterpreter;
+    if (isolateInterpreter == null) {
       throw StateError('Model belum siap.');
     }
 
     final input = ImagePreprocessor.modelImageToInput(modelImage);
     final output = <List<double>>[List<double>.filled(_labels.length, 0)];
-    interpreter.run(input, output);
+    await isolateInterpreter.run(input, output);
     return _predictionFromScores(List<double>.from(output.first));
   }
 
@@ -232,22 +225,24 @@ class SignClassifier {
     return sum / a.length;
   }
 
-  SignPrediction _blendPredictions(
-    SignPrediction imagePrediction,
-    SignPrediction landmarkPrediction,
+  SignPrediction _blendImagePredictions(
+    SignPrediction contextPrediction,
+    SignPrediction tightPrediction,
   ) {
     return _predictionFromScores(
       List<double>.generate(
         _labels.length,
         (index) =>
-            imagePrediction.scores[index] * 0.70 +
-            landmarkPrediction.scores[index] * 0.30,
+            contextPrediction.scores[index] * 0.35 +
+            tightPrediction.scores[index] * 0.65,
         growable: false,
       ),
     );
   }
 
-  void close() {
+  Future<void> close() async {
+    await _isolateInterpreter?.close();
+    _isolateInterpreter = null;
     _interpreter?.close();
     _interpreter = null;
     _initialization = null;
