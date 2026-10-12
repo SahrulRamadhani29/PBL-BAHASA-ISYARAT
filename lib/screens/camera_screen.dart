@@ -10,8 +10,10 @@ import 'package:hand_landmarker/hand_landmarker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/sign_prediction.dart';
+import '../services/camera_preview_size.dart';
 import '../services/image_preprocessor.dart';
 import '../services/sign_classifier.dart';
+import '../widgets/full_bleed_camera_preview.dart';
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key, this.cameraEnabled = true});
@@ -124,12 +126,21 @@ class _CameraScreenState extends State<CameraScreen>
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.yuv420,
     );
-    await controller.initialize();
+    try {
+      await controller.initialize();
+      // Lock the camera as well as the app UI. Otherwise preview and recording
+      // may select different orientations even while the screen stays portrait.
+      await controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
+    } catch (_) {
+      await controller.dispose();
+      rethrow;
+    }
     if (!mounted) {
       await controller.dispose();
       return;
     }
     setState(() => _controller = controller);
+    await _refreshPreviewSize(controller);
     if (_selectedTarget.isNotEmpty) {
       await _startTargetAnalysis(resetResults: false);
     }
@@ -216,6 +227,7 @@ class _CameraScreenState extends State<CameraScreen>
         _isSessionActive = true;
       });
       await controller.startVideoRecording(onAvailable: _onCameraFrame);
+      await _refreshPreviewSize(controller);
     } catch (error) {
       if (mounted) {
         setState(() => _isSessionActive = false);
@@ -281,6 +293,7 @@ class _CameraScreenState extends State<CameraScreen>
         setState(() => _resetRecognitionState(clearTargetResults: true));
       }
       await controller.startImageStream(_onCameraFrame);
+      await _refreshPreviewSize(controller);
       if (!mounted || controller != _controller) return;
       if (_selectedTarget.isEmpty) {
         await controller.stopImageStream();
@@ -488,6 +501,11 @@ class _CameraScreenState extends State<CameraScreen>
         ),
         'sensor_orientation': _controller?.description.sensorOrientation,
         'device_orientation': _controller?.value.deviceOrientation.name,
+        'capture_orientation':
+            _controller?.value.lockedCaptureOrientation?.name,
+        'recording_orientation': _controller?.value.recordingOrientation?.name,
+        'preview_width': _controller?.value.previewSize?.width,
+        'preview_height': _controller?.value.previewSize?.height,
         'lens_direction': _controller?.description.lensDirection.name,
         'frame_width': _lastFrameWidth,
         'frame_height': _lastFrameHeight,
@@ -537,9 +555,11 @@ class _CameraScreenState extends State<CameraScreen>
     try {
       if (controller?.value.isRecordingVideo ?? false) {
         final recording = await controller!.stopVideoRecording();
+        await _refreshPreviewSize(controller);
         videoPath = await _saveRecording(recording);
       } else if (controller?.value.isStreamingImages ?? false) {
         await controller!.stopImageStream();
+        await _refreshPreviewSize(controller);
       }
     } catch (error) {
       if (mounted) _showMessage('Rekaman video gagal disimpan: $error');
@@ -679,6 +699,13 @@ class _CameraScreenState extends State<CameraScreen>
     return controller.description.lensDirection == CameraLensDirection.front
         ? (sensor + device) % 360
         : (sensor - device + 360) % 360;
+  }
+
+  Future<void> _refreshPreviewSize(CameraController controller) {
+    return synchronizeCameraPreviewSize(
+      controller,
+      isCurrent: () => mounted && identical(controller, _controller),
+    );
   }
 
   Future<void> _disposeCamera() async {
@@ -970,7 +997,7 @@ class _CameraScreenState extends State<CameraScreen>
         ),
       );
     }
-    return _CoverCameraPreview(controller: controller);
+    return FullBleedCameraPreview(controller: controller);
   }
 }
 
@@ -998,37 +1025,6 @@ class _RoundCameraButton extends StatelessWidget {
       tooltip: tooltip,
       onPressed: onPressed,
       icon: Icon(icon),
-    );
-  }
-}
-
-class _CoverCameraPreview extends StatelessWidget {
-  const _CoverCameraPreview({required this.controller});
-
-  final CameraController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<CameraValue>(
-      valueListenable: controller,
-      builder: (context, value, _) {
-        final previewSize = value.previewSize;
-        if (previewSize == null) return CameraPreview(controller);
-
-        // Camera sizes use sensor (landscape) orientation. FittedBox crops the
-        // excess while CameraX handles device rotation in its native preview.
-        return ClipRect(
-          child: FittedBox(
-            fit: BoxFit.cover,
-            alignment: Alignment.center,
-            child: SizedBox(
-              width: previewSize.height,
-              height: previewSize.width,
-              child: CameraPreview(controller),
-            ),
-          ),
-        );
-      },
     );
   }
 }

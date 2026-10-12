@@ -6,6 +6,14 @@ hasil pada HP sebenarnya.
 
 ## Protokol minimum
 
+Sebelum mengukur huruf, periksa bentuk preview dengan sebuah benda bulat atau
+kartu persegi. Bentuknya harus tetap proporsional saat kamera pertama dibuka,
+memilih target huruf, kembali ke latihan bebas, menekan Mulai, dan menekan
+Akhiri. Ulangi dengan kamera depan dan belakang. Preview memenuhi layar dengan
+memotong sebagian tepi; lingkaran tidak boleh berubah menjadi oval. Periksa juga
+setelah pindah menu dan kembali dari latar belakang. Ini merupakan pemeriksaan
+visual pada perangkat, terpisah dari tes otomatis rasio dan pemrosesan gambar.
+
 1. Gunakan sedikitnya 3 peserta yang tidak menjadi sumber data training.
 2. Uji seluruh 24 huruf statis, masing-masing 10 kali per peserta.
 3. Ulangi pada cahaya terang, cahaya redup, dan latar yang berbeda.

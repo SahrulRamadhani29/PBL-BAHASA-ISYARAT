@@ -35,6 +35,10 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   camera: ^0.12.1
+  # The preview-size compatibility fix reads CameraX's active native preview.
+  # Keep this version pinned until CameraX reports resolution changes itself.
+  camera_android_camerax: 0.7.4+7
+  camera_platform_interface: ^2.13.1
   image_picker: ^1.2.3
   tflite_flutter: ^0.12.1
   image: ^4.9.2

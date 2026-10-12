@@ -32,6 +32,11 @@ Gunakan HP Android nyata untuk menguji kamera. Izinkan akses kamera saat
 diminta. Kamera depan dipilih secara default dan dapat diganti dari tombol
 di kanan atas.
 
+Preview mempertahankan proporsi kamera dan memenuhi layar dengan pemotongan
+tepi, bukan peregangan gambar. Orientasi kamera dikunci portrait seperti layar
+aplikasi. Ukuran preview CameraX dibaca ulang saat membuka kamera, mengaktifkan
+deteksi, serta memulai/mengakhiri rekaman karena resolusinya dapat berubah.
+
 Panduan lengkap instalasi Flutter 3.47.2, JDK 17, Android SDK, USB debugging,
 build APK, dan troubleshooting tersedia di [`REQUIREMENTS.md`](REQUIREMENTS.md).
 

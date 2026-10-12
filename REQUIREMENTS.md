@@ -124,6 +124,8 @@ Package utama yang digunakan:
 | Package | Versi terkunci | Kegunaan |
 | --- | --- | --- |
 | camera | 0.12.1 | Preview kamera, stream frame, dan rekaman video |
+| camera_android_camerax | 0.7.4+7 | Backend Android, dikunci versinya untuk sinkronisasi ukuran preview |
+| camera_platform_interface | 2.13.1 | Mengakses backend kamera aktif untuk membaca ukuran preview |
 | hand_landmarker | 3.1.0 | Memastikan tangan terdeteksi sebelum klasifikasi |
 | tflite_flutter | 0.12.1 | Menjalankan model AI secara on-device |
 | image_picker | 1.2.3 | Memilih satu atau banyak gambar |
