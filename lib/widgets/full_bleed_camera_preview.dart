@@ -2,6 +2,8 @@ import 'package:camera/camera.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../services/camera_preview_size.dart';
+
 /// Fills the available space by cropping the camera image, without stretching.
 class FullBleedCameraPreview extends StatelessWidget {
   const FullBleedCameraPreview({super.key, required this.controller});
@@ -10,9 +12,14 @@ class FullBleedCameraPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<CameraValue>(
-      valueListenable: controller,
-      builder: (context, value, _) {
+    final geometry = cameraPreviewGeometry(controller);
+    return ListenableBuilder(
+      listenable: Listenable.merge([controller, geometry]),
+      builder: (context, _) {
+        final value = controller.value;
+        if (value.isInitialized && geometry.value != null) {
+          return _nativePreview(geometry.value!);
+        }
         final previewSize = value.previewSize;
         if (!value.isInitialized ||
             previewSize == null ||
@@ -52,6 +59,46 @@ class FullBleedCameraPreview extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  Widget _nativePreview(CameraPreviewGeometry geometry) {
+    Widget preview = Texture(textureId: controller.cameraId);
+    if (geometry.transformManually) {
+      // Crop in buffer coordinates, then rotate, then mirror in upright
+      // coordinates. CameraX may have already applied part of this transform.
+      preview = SizedBox.fromSize(
+        size: geometry.cropRect.size,
+        child: ClipRect(
+          child: Stack(
+            children: [
+              Positioned(
+                left: -geometry.cropRect.left,
+                top: -geometry.cropRect.top,
+                width: geometry.bufferSize.width,
+                height: geometry.bufferSize.height,
+                child: preview,
+              ),
+            ],
+          ),
+        ),
+      );
+      preview = RotatedBox(
+        quarterTurns: geometry.rotationDegrees ~/ 90,
+        child: preview,
+      );
+      if (geometry.mirrored) {
+        preview = Transform.scale(scaleX: -1, child: preview);
+      }
+    }
+    // SurfaceTexture automatically applies a direct camera's transform.
+    // Bypass CameraPreview/RotatedPreviewDelegate so rotation is never applied
+    // twice using the physical sensor after StreamSharing reconfigures it.
+    return ClipRect(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox.fromSize(size: geometry.uprightSize, child: preview),
+      ),
     );
   }
 }

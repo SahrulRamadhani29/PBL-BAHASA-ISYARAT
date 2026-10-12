@@ -319,6 +319,7 @@ class _CameraScreenState extends State<CameraScreen>
     if (controller == null || !controller.value.isStreamingImages) return;
     try {
       await controller.stopImageStream();
+      await _refreshPreviewSize(controller);
     } catch (error) {
       if (mounted) _showMessage('Deteksi otomatis gagal dihentikan: $error');
     }
@@ -506,6 +507,9 @@ class _CameraScreenState extends State<CameraScreen>
         'recording_orientation': _controller?.value.recordingOrientation?.name,
         'preview_width': _controller?.value.previewSize?.width,
         'preview_height': _controller?.value.previewSize?.height,
+        'native_preview': _controller == null
+            ? null
+            : cameraPreviewGeometry(_controller!).value?.toJson(),
         'lens_direction': _controller?.description.lensDirection.name,
         'frame_width': _lastFrameWidth,
         'frame_height': _lastFrameHeight,

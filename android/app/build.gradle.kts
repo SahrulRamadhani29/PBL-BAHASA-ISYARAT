@@ -44,6 +44,11 @@ kotlin {
     }
 }
 
+dependencies {
+    // Exposes CameraX Preview and SurfaceRequest to the app-owned geometry bridge.
+    implementation("androidx.camera:camera-core:1.6.1")
+}
+
 flutter {
     source = "../.."
 }

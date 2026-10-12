@@ -34,8 +34,14 @@ di kanan atas.
 
 Preview mempertahankan proporsi kamera dan memenuhi layar dengan pemotongan
 tepi, bukan peregangan gambar. Orientasi kamera dikunci portrait seperti layar
-aplikasi. Ukuran preview CameraX dibaca ulang saat membuka kamera, mengaktifkan
-deteksi, serta memulai/mengakhiri rekaman karena resolusinya dapat berubah.
+aplikasi. Transformasi surface CameraX (ukuran, crop, rotasi, dan mirror) dibaca
+saat membuka kamera, mengaktifkan/menghentikan deteksi, serta memulai/mengakhiri
+rekaman. Preview memakai transformasi aktual ini, termasuk ketika CameraX sudah
+memutar buffer saat rekaman. Metadata `CameraController.previewSize` tidak diubah.
+
+Perbaikan ini mencakup kode Android native: setelah memperbarui project, hentikan
+aplikasi lalu jalankan `flutter run` lagi. Hot reload saja tidak memperbarui bridge
+Android. Bridge mengikuti versi backend CameraX yang dikunci di project.
 
 Panduan lengkap instalasi Flutter 3.47.2, JDK 17, Android SDK, USB debugging,
 build APK, dan troubleshooting tersedia di [`REQUIREMENTS.md`](REQUIREMENTS.md).

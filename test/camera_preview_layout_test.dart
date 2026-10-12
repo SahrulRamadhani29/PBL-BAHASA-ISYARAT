@@ -139,9 +139,9 @@ void main() {
         final controller = _PreviewController(direction);
         addTearDown(controller.dispose);
         controller.value = _state(controller.description);
-      for (final viewport in [
-        const Size(360, 580),
-        const Size(360, 560),
+        for (final viewport in [
+          const Size(360, 580),
+          const Size(360, 560),
           const Size(600, 360),
           const Size(500, 500),
         ]) {
