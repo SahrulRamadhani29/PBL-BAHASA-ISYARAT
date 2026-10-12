@@ -111,6 +111,20 @@ void main() {
     expect(input.first.first.first, hasLength(1));
   });
 
+  test('grayscale satu kanal mempertahankan intensitas input model', () {
+    final image = img.Image(width: 28, height: 28, numChannels: 1);
+    for (var y = 0; y < image.height; y++) {
+      for (var x = 0; x < image.width; x++) {
+        image.setPixelR(x, y, 200);
+      }
+    }
+
+    final input = ImagePreprocessor.modelImageToInput(image);
+
+    expect(input.first.first.first.first, 200);
+    expect(input.first.last.last.first, 200);
+  });
+
   test('koordinat landmark mengikuti rotasi dan mirror input kamera', () {
     final points = ImagePreprocessor.orientNormalizedPoints(
       const [Offset(0.2, 0.3)],
@@ -300,13 +314,43 @@ void main() {
 
         expect(crops.context, hasModelDimensions);
         expect(crops.tight, hasModelDimensions);
-        // Context intentionally keeps the full short side so framing remains
-        // close to training data; the hand is therefore less concentrated.
-        expect(_averageBrightness(crops.context), greaterThan(30));
-        expect(_averageBrightness(crops.tight), greaterThan(60));
+        expect(_averageBrightness(crops.context), greaterThan(45));
+        expect(_averageBrightness(crops.tight), greaterThan(65));
       },
     );
   }
+
+  test('crop tepi memakai padding agar tangan tetap berada di tengah', () {
+    const hand = Rect.fromLTRB(0.76, 0.28, 1, 0.72);
+    final frame = _syntheticYuvFrame(
+      width: 64,
+      height: 48,
+      rotationDegrees: 0,
+      mirroredHorizontally: false,
+      brightRect: hand,
+    );
+    final crop = ImagePreprocessor.cameraImageToGrayCrops(
+      frame,
+      rotationDegrees: 0,
+      mirrorHorizontally: false,
+      normalizedLandmarks: _mediaPipeLandmarksFor(
+        hand,
+        mirroredHorizontally: false,
+      ),
+    ).context;
+
+    var weightedX = 0.0;
+    var brightness = 0.0;
+    for (var y = 0; y < crop.height; y++) {
+      for (var x = 0; x < crop.width; x++) {
+        final value = crop.getPixel(x, y).r.toDouble();
+        weightedX += x * value;
+        brightness += value;
+      }
+    }
+
+    expect(weightedX / brightness, inInclusiveRange(11.0, 17.0));
+  });
 
   test('crop landmark mengikuti tangan yang berada di pinggir frame', () {
     final image = img.Image(width: 100, height: 100, numChannels: 1);

@@ -19,6 +19,13 @@ class CameraFrameCrops {
 class ImagePreprocessor {
   const ImagePreprocessor._();
 
+  // Landmark bounds are expanded by 30% and 20% per side. The small minimum
+  // prevents a noisy, tiny detection from being enlarged into a false pose.
+  static const _contextPaddingScale = 1.60;
+  static const _tightPaddingScale = 1.40;
+  static const _contextMinimumSideFraction = 0.28;
+  static const _tightMinimumSideFraction = 0.22;
+
   static int effectivePortraitRotation({
     required int frameWidth,
     required int frameHeight,
@@ -92,14 +99,14 @@ class ImagePreprocessor {
       final contextBounds = _squareCropAroundBounds(
         orientedSize,
         bounds,
-        paddingScale: 2.4,
-        minimumSideFraction: 1,
+        paddingScale: _contextPaddingScale,
+        minimumSideFraction: _contextMinimumSideFraction,
       );
       final tightBounds = _squareCropAroundBounds(
         orientedSize,
         bounds,
-        paddingScale: 1.6,
-        minimumSideFraction: 0.72,
+        paddingScale: _tightPaddingScale,
+        minimumSideFraction: _tightMinimumSideFraction,
       );
       return CameraFrameCrops(
         context: _sampleLuminanceCrop(
@@ -132,8 +139,8 @@ class ImagePreprocessor {
       context: _cropAroundHand(
         oriented,
         bounds,
-        paddingScale: 2.4,
-        minimumSideFraction: 1,
+        paddingScale: _contextPaddingScale,
+        minimumSideFraction: _contextMinimumSideFraction,
       ),
       tight: _cropAroundLandmarks(oriented, landmarks),
       orientedLandmarks: landmarks,
@@ -232,7 +239,7 @@ class ImagePreprocessor {
         28,
         (y) => List<List<double>>.generate(
           28,
-          (x) => <double>[resized.getPixel(x, y).luminance.toDouble()],
+          (x) => <double>[_pixelLuminance(resized, x, y).toDouble()],
           growable: false,
         ),
         growable: false,
@@ -299,15 +306,18 @@ class ImagePreprocessor {
     final shortestSide = imageSize.width < imageSize.height
         ? imageSize.width
         : imageSize.height;
+    final longestSide = imageSize.width > imageSize.height
+        ? imageSize.width
+        : imageSize.height;
     final minimumSide = (shortestSide * minimumSideFraction).clamp(
       1.0,
       shortestSide,
     );
-    final side = requestedSide.clamp(minimumSide, shortestSide);
-    final maxX = imageSize.width - side;
-    final maxY = imageSize.height - side;
-    final x = ((left + right - side) / 2).clamp(0.0, maxX);
-    final y = ((top + bottom - side) / 2).clamp(0.0, maxY);
+    final side = requestedSide.clamp(minimumSide, longestSide);
+    // Keep the hand centred even at a frame edge. Sampling outside the image
+    // is filled with background instead of shifting and distorting the crop.
+    final x = (left + right - side) / 2;
+    final y = (top + bottom - side) / 2;
     return Rect.fromLTWH(x, y, side, side);
   }
 
@@ -324,6 +334,11 @@ class ImagePreprocessor {
       cameraImage.height,
       rotationDegrees,
     );
+    final paddingLuminance = _cameraBorderLuminance(
+      cameraImage,
+      rotationDegrees: rotationDegrees,
+      mirrorHorizontally: mirrorHorizontally,
+    );
     final output = img.Image(width: 28, height: 28, numChannels: 1);
     for (var outputY = 0; outputY < 28; outputY++) {
       for (var outputX = 0; outputX < 28; outputX++) {
@@ -336,6 +351,13 @@ class ImagePreprocessor {
             final orientedY =
                 (crop.top + (outputY + sampleY) * crop.height / 28) /
                 orientedSize.height;
+            if (orientedX < 0 ||
+                orientedX >= 1 ||
+                orientedY < 0 ||
+                orientedY >= 1) {
+              sum += paddingLuminance;
+              continue;
+            }
             final sensorPoint = _orientedToSensorPoint(
               Offset(orientedX, orientedY),
               rotationDegrees: rotationDegrees,
@@ -357,6 +379,46 @@ class ImagePreprocessor {
       }
     }
     return output;
+  }
+
+  static int _cameraBorderLuminance(
+    CameraImage cameraImage, {
+    required int rotationDegrees,
+    required bool mirrorHorizontally,
+  }) {
+    const points = <Offset>[
+      Offset(0.02, 0.02),
+      Offset(0.50, 0.02),
+      Offset(0.98, 0.02),
+      Offset(0.02, 0.50),
+      Offset(0.98, 0.50),
+      Offset(0.02, 0.98),
+      Offset(0.50, 0.98),
+      Offset(0.98, 0.98),
+    ];
+    final plane = cameraImage.planes.first;
+    final pixelStride = plane.bytesPerPixel ?? 1;
+    final values =
+        points
+            .map((point) {
+              final sensorPoint = _orientedToSensorPoint(
+                point,
+                rotationDegrees: rotationDegrees,
+                mirroredHorizontally: mirrorHorizontally,
+              );
+              final x = (sensorPoint.dx * cameraImage.width).floor().clamp(
+                0,
+                cameraImage.width - 1,
+              );
+              final y = (sensorPoint.dy * cameraImage.height).floor().clamp(
+                0,
+                cameraImage.height - 1,
+              );
+              return plane.bytes[y * plane.bytesPerRow + x * pixelStride];
+            })
+            .toList(growable: false)
+          ..sort();
+    return (values[3] + values[4]) ~/ 2;
   }
 
   static Offset _orientedToSensorPoint(
@@ -382,31 +444,60 @@ class ImagePreprocessor {
     double paddingScale = 1.55,
     double minimumSideFraction = 0,
   }) {
-    final left = normalizedCrop.left.clamp(0.0, 1.0) * source.width;
-    final top = normalizedCrop.top.clamp(0.0, 1.0) * source.height;
-    final right = normalizedCrop.right.clamp(0.0, 1.0) * source.width;
-    final bottom = normalizedCrop.bottom.clamp(0.0, 1.0) * source.height;
-    final handWidth = (right - left).abs();
-    final handHeight = (bottom - top).abs();
-    final shortestSide = source.width < source.height
-        ? source.width
-        : source.height;
-    final requestedSide =
-        ((handWidth > handHeight ? handWidth : handHeight) * paddingScale)
-            .round();
-    final minimumSide = (shortestSide * minimumSideFraction).round().clamp(
-      1,
-      shortestSide,
+    final crop = _squareCropAroundBounds(
+      Size(source.width.toDouble(), source.height.toDouble()),
+      normalizedCrop,
+      paddingScale: paddingScale,
+      minimumSideFraction: minimumSideFraction,
     );
-    final side = requestedSide.clamp(minimumSide, shortestSide);
-    final centerX = (left + right) / 2;
-    final centerY = (top + bottom) / 2;
-    final maxX = source.width - side;
-    final maxY = source.height - side;
-    final x = (centerX - side / 2).round().clamp(0, maxX);
-    final y = (centerY - side / 2).round().clamp(0, maxY);
+    return _cropImageWithPadding(source, crop);
+  }
 
-    return img.copyCrop(source, x: x, y: y, width: side, height: side);
+  static img.Image _cropImageWithPadding(img.Image source, Rect crop) {
+    final side = crop.width
+        .round()
+        .clamp(1, source.width + source.height)
+        .toInt();
+    final startX = crop.left.round();
+    final startY = crop.top.round();
+    final paddingLuminance = _imageBorderLuminance(source);
+    final output = img.Image(width: side, height: side, numChannels: 1);
+    for (var y = 0; y < side; y++) {
+      final sourceY = startY + y;
+      for (var x = 0; x < side; x++) {
+        final sourceX = startX + x;
+        final luminance =
+            sourceX >= 0 &&
+                sourceX < source.width &&
+                sourceY >= 0 &&
+                sourceY < source.height
+            ? _pixelLuminance(source, sourceX, sourceY)
+            : paddingLuminance;
+        output.setPixelR(x, y, luminance);
+      }
+    }
+    return output;
+  }
+
+  static num _imageBorderLuminance(img.Image source) {
+    final maxX = source.width - 1;
+    final maxY = source.height - 1;
+    final values = <num>[
+      _pixelLuminance(source, 0, 0),
+      _pixelLuminance(source, maxX ~/ 2, 0),
+      _pixelLuminance(source, maxX, 0),
+      _pixelLuminance(source, 0, maxY ~/ 2),
+      _pixelLuminance(source, maxX, maxY ~/ 2),
+      _pixelLuminance(source, 0, maxY),
+      _pixelLuminance(source, maxX ~/ 2, maxY),
+      _pixelLuminance(source, maxX, maxY),
+    ]..sort();
+    return (values[3] + values[4]) / 2;
+  }
+
+  static num _pixelLuminance(img.Image source, int x, int y) {
+    final pixel = source.getPixel(x, y);
+    return source.numChannels == 1 ? pixel.r : pixel.luminance;
   }
 
   static img.Image _cropAroundLandmarks(
@@ -416,8 +507,8 @@ class ImagePreprocessor {
     return _cropAroundHand(
       source,
       _boundsForPoints(normalizedLandmarks),
-      paddingScale: 1.6,
-      minimumSideFraction: 0.72,
+      paddingScale: _tightPaddingScale,
+      minimumSideFraction: _tightMinimumSideFraction,
     );
   }
 
